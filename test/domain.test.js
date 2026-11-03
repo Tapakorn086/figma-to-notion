@@ -177,3 +177,8 @@ test('type lists in code.js and ui.html stay in sync', () => {
     .match(new RegExp(`const ${name} = (\\[[^\\]]*\\])`))[1].replace(/'/g, '"'));
   assert.deepEqual(read('code.js', 'TYPE_LABELS'), read('ui.html', 'TYPES'));
 });
+
+test('contentHash changes when the text inside a Group changes', () => {
+  const base = { type: 'Group', text: '', groupText: ['a', 'b'] };
+  assert.notEqual(ui.contentHash(base), ui.contentHash({ ...base, groupText: ['a', 'c'] }));
+});

@@ -101,6 +101,23 @@ function readTable(node) {
   return rows;
 }
 
+// Text inside a Group, in layer order, so the row keeps the details and not only the group name.
+// Text is not only in TEXT layers: stickies, shapes with text and tables hold it too.
+function readGroupText(node) {
+  const lines = [];
+  const types = {};
+  for (const child of node.findAll(() => true)) {
+    types[child.type] = (types[child.type] || 0) + 1;
+    let value = '';
+    if (child.type === 'TEXT') value = child.characters;
+    else if (child.type === 'TABLE') value = readTable(child).map((row) => row.join(' | ')).join('\n');
+    else if (child.text && typeof child.text.characters === 'string') value = child.text.characters;
+    if (value.trim()) lines.push(value.trim());
+  }
+  const found = Object.entries(types).map(([type, count]) => `${type} ${count}`).join(', ');
+  return { lines, info: found || 'ไม่มี layer ข้างใน' };
+}
+
 // Layers linked to the selection by a connector are added automatically,
 // so their relations are not lost. Only one hop away.
 async function findNeighbors(selectedIds) {
@@ -188,7 +205,7 @@ figma.ui.onmessage = async (msg) => {
       if (!node) continue;
 
       let image = null;
-      if (['Image', 'Frame', 'Drawing', 'Stamp', 'Widget'].includes(item.type)) {
+      if (['Image', 'Frame', 'Group', 'Drawing', 'Stamp', 'Widget'].includes(item.type)) {
         try {
           image = await node.exportAsync({ format: 'PNG' });
         } catch (err) {
@@ -199,6 +216,7 @@ figma.ui.onmessage = async (msg) => {
       // Remember which Section the layer sits in, so the row can link to it
       const sectionId = node.parent && node.parent.type === 'SECTION' ? node.parent.id : null;
 
+      const group = node.type === 'GROUP' ? readGroupText(node) : null;
       items.push({
         ...item,
         figmaUrl: makeFigmaUrl(node),
@@ -206,6 +224,8 @@ figma.ui.onmessage = async (msg) => {
         sectionId,
         table: item.type === 'Table' ? readTable(node) : null,
         extra: readExtra(node),
+        groupText: group ? group.lines : [],
+        groupInfo: group ? group.info : '',
         rawType: node.type,
         // Stable key so the same layer updates its row instead of adding a new one
         key: `${figma.fileKey || 'local'}:${node.id}`,

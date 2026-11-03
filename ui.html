@@ -225,7 +225,7 @@
         image = 5381;
         for (let i = 0; i < item.image.length; i++) image = ((image << 5) + image + item.image[i]) | 0;
       }
-      return hashText(JSON.stringify([item.type, item.text, item.extra, item.table, item.rawType, image]));
+      return hashText(JSON.stringify([item.type, item.text, item.extra, item.table, item.groupText, item.rawType, image]));
     }
     /* domain:end */
 
@@ -380,6 +380,12 @@
       if (item.type === 'Link' && /^https?:\/\//.test(item.extra || '')) {
         children.push({ object: 'block', type: 'bookmark', bookmark: { url: item.extra } });
       }
+      // Text of every layer inside the Group, one bullet each (Notion allows 100 children per request)
+      if (item.type === 'Group' && item.groupText) {
+        item.groupText.slice(0, 100).forEach((line) => {
+          children.push({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: text(line) } });
+        });
+      }
       if (item.type === 'Other') {
         children.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: text(`ชนิดใน Figma: ${item.rawType}`) } });
       }
@@ -436,8 +442,8 @@
     }
 
     // Create or update one row, returns its page ID and what changed
-    async function syncRow(databaseId, item) {
-      const existing = await findByKey(databaseId, item.key);
+    async function syncRow(databaseId, item, existingByKey, sectionPageId) {
+      const existing = existingByKey ? existingByKey.get(item.key) || null : await findByKey(databaseId, item.key);
       const base = {
         Name: { title: text(item.name) },
         Type: { select: { name: item.type } },
@@ -457,14 +463,16 @@
               ...base,
               Status: { status: { name: 'To do' } },
               'Change log': { rich_text: text(`${nowLabel()}: สร้างจาก Figma`) },
+              // Known at creation when the Section was already created, so no extra request is needed
+              ...(sectionPageId ? { 'In section': { relation: [{ id: sectionPageId }] } } : {}),
             },
             children: [await contentToggle(item)],
           }),
         });
-        return { id: page.id, status: 'new' };
+        return { id: page.id, status: 'new', previous: { ...NO_RELATIONS, section: sectionPageId ? [sectionPageId] : [] } };
       }
 
-      const connected = (existing.properties['Connected to']?.relation || []).map((rel) => rel.id);
+      const previous = relationState(existing);
       const changes = diffRow(existing, item);
       const previousLog = plain(existing.properties['Change log'].rich_text);
       const properties = { ...base };
@@ -472,24 +480,41 @@
 
       if (!changes.length) {
         await notion(`/pages/${existing.id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties: { 'Last synced': base['Last synced'] } }) });
-        return { id: existing.id, status: 'same', connected };
+        return { id: existing.id, status: 'same', previous };
       }
 
       const newLog = [`${nowLabel()}: ${changes.join('; ')}`, previousLog].filter(Boolean).join('\n');
       properties['Change log'] = { rich_text: text(newLog.slice(0, 2000)) };
       await notion(`/pages/${existing.id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties }) });
       if (changes.includes('เนื้อหาเปลี่ยน')) await replaceContent(existing.id, item);
-      return { id: existing.id, status: 'updated', changes, connected };
+      return { id: existing.id, status: 'updated', changes, previous };
     }
 
-    // Relations are rebuilt from the current layers on every send
-    async function writeRelations(pageId, entry) {
+    // Relations as they are stored on a row, so an unchanged row can be skipped
+    const NO_RELATIONS = { connected: [], section: [], label: '' };
+    function relationState(row) {
+      return {
+        connected: (row.properties['Connected to']?.relation || []).map((rel) => rel.id),
+        section: (row.properties['In section']?.relation || []).map((rel) => rel.id),
+        label: plain(row.properties.Label?.rich_text),
+      };
+    }
+
+    // Relations are rebuilt from the current layers on every send, but only written when they differ.
+    // Returns true when a request was made.
+    async function writeRelations(pageId, entry, previous) {
+      const label = entry.labels.join(' | ');
+      const sameTargets = entry.targets.length === previous.connected.length && entry.targets.every((t, i) => t.id === previous.connected[i]);
+      const sameSection = entry.section === undefined || (entry.section ? [entry.section] : []).join() === previous.section.join();
+      if (sameTargets && sameSection && label === previous.label) return false;
+
       const properties = {
         'Connected to': { relation: entry.targets },
-        Label: { rich_text: entry.labels.length ? text(entry.labels.join(' | ')) : [] },
+        Label: { rich_text: label ? text(label) : [] },
       };
       if (entry.section !== undefined) properties['In section'] = { relation: entry.section ? [{ id: entry.section }] : [] };
       await notion(`/pages/${pageId}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties }) });
+      return true;
     }
 
     /* domain:start */
@@ -686,7 +711,7 @@
         const total = msg.items.length;
         const byId = new Map(items.map((item) => [item.id, item]));
         const pageIds = new Map();
-        const previousLinks = new Map();
+        const previousRelations = new Map();
         let created = 0;
         let updated = 0;
         let unchanged = 0;
@@ -705,6 +730,17 @@
           phaseRequests = stats.requests;
         };
 
+        // One query loads every row of this file, instead of one search per layer.
+        // If it fails, syncRow falls back to searching for each layer.
+        let existingByKey = null;
+        try {
+          const prefix = `${fileKey}:`;
+          const rows = await queryAll(databaseId, { property: 'Figma key', rich_text: { starts_with: prefix } });
+          existingByKey = new Map(rows.map((row) => [plain(row.properties['Figma key'].rich_text), row]));
+        } catch (err) {
+          log(`✘ โหลดแถวเดิมไม่สำเร็จ ค้นทีละแถวแทน: ${err.message}`);
+        }
+
         // Rows are synced one at a time so the progress bar and each row's state stay accurate
         for (const [index, item] of msg.items.entries()) {
           const view = byId.get(item.id);
@@ -714,14 +750,17 @@
           const rowStart = performance.now();
           const rowRequests = stats.requests;
           try {
-            const result = await syncRow(databaseId, item);
+            // The Section is created before its layers when both were sent, so its page ID is already known
+            const sectionPageId = item.sectionId ? pageIds.get(item.sectionId) : undefined;
+            const result = await syncRow(databaseId, item, existingByKey, sectionPageId);
             log(`  ⏱ ${item.name}: ${seconds(performance.now() - rowStart)} · ${stats.requests - rowRequests} request`);
             pageIds.set(item.id, result.id);
-            previousLinks.set(result.id, result.connected || []);
+            previousRelations.set(result.id, result.previous || NO_RELATIONS);
             if (result.status === 'new') {
               created++;
               if (view) { view.state = 'ok'; view.stateText = 'เพิ่มใหม่'; }
               log(`✔ เพิ่ม ${item.name} (${item.type})`);
+              if (item.groupInfo) log(`  ข้างใน: ${item.groupInfo} · ข้อความ ${item.groupText.length} ชิ้น`);
             } else if (result.status === 'updated') {
               updated++;
               if (view) { view.state = 'ok'; view.stateText = 'อัปเดต'; }
@@ -746,7 +785,7 @@
         const sentPages = new Set(pageIds.values());
         const relations = new Map();
         for (const pageId of sentPages) {
-          const kept = previousLinks.get(pageId).filter((id) => !sentPages.has(id)).map((id) => ({ id }));
+          const kept = previousRelations.get(pageId).connected.filter((id) => !sentPages.has(id)).map((id) => ({ id }));
           relations.set(pageId, { targets: kept, labels: [], section: undefined });
         }
 
@@ -769,7 +808,7 @@
 
         for (const [pageId, entry] of relations) {
           try {
-            await writeRelations(pageId, entry);
+            await writeRelations(pageId, entry, previousRelations.get(pageId));
           } catch (err) {
             log(`✘ เชื่อมความสัมพันธ์ไม่สำเร็จ: ${err.message}`);
           }
