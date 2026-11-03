@@ -290,7 +290,13 @@
       $('selectAll').textContent = items.length && items.every((item) => item.selected) ? 'ยกเลิกทั้งหมด' : 'เลือกทั้งหมด';
     }
 
+    // Timing counters for the send log: how many Notion requests and how long they waited
+    const stats = { requests: 0, retries: 0, apiMs: 0 };
+    const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
+
     async function notion(path, options = {}, attempt = 0) {
+      stats.requests++;
+      const started = performance.now();
       const response = await fetch(NOTION_API + path, {
         ...options,
         headers: {
@@ -301,9 +307,12 @@
       });
       // Error pages (e.g. 502) may not be JSON
       const data = await response.json().catch(() => ({}));
+      stats.apiMs += performance.now() - started;
       // Rate limited or a temporary server error: wait and try again a few times
       if ((response.status === 429 || response.status >= 500) && attempt < 3) {
         const retryAfter = Number(response.headers.get('Retry-After')) || 2 ** attempt;
+        stats.retries++;
+        log(`↻ Notion ตอบ ${response.status} รอ ${retryAfter}s แล้วลองใหม่`);
         await sleep(retryAfter * 1000);
         return notion(path, options, attempt + 1);
       }
@@ -602,6 +611,8 @@
       }
     };
 
+    let sendStartedAt = 0;
+
     $('send').onclick = () => {
       const selected = items.filter((item) => item.selected).map(({ selected, auto, state, stateText, ...rest }) => rest);
       if (!selected.length) return;
@@ -613,6 +624,7 @@
       renderList();
       setBusy(true);
       setStatus(`กำลังเตรียม ${selected.length} รายการ...`);
+      sendStartedAt = performance.now();
       parent.postMessage({ pluginMessage: { type: 'prepare', items: selected } }, '*');
     };
 
@@ -679,7 +691,19 @@
         let updated = 0;
         let unchanged = 0;
         let failed = 0;
+        const imageCount = msg.items.filter((item) => item.image).length;
+        const imageKb = msg.items.reduce((sum, item) => sum + (item.image ? item.image.length : 0), 0) / 1024;
+        log(`⏱ เตรียมใน Figma ${seconds(performance.now() - sendStartedAt)} (รูป ${imageCount} รูป ${Math.round(imageKb)} KB)`);
         log(`เริ่มส่ง ${total} รายการ (พบความสัมพันธ์ ${msg.links.length} เส้น)`);
+        Object.assign(stats, { requests: 0, retries: 0, apiMs: 0 });
+        // Each phase logs its time and request count, to see where a send spends its time
+        let phaseStart = performance.now();
+        let phaseRequests = 0;
+        const endPhase = (label) => {
+          log(`⏱ ${label} ${seconds(performance.now() - phaseStart)} · ${stats.requests - phaseRequests} request`);
+          phaseStart = performance.now();
+          phaseRequests = stats.requests;
+        };
 
         // Rows are synced one at a time so the progress bar and each row's state stay accurate
         for (const [index, item] of msg.items.entries()) {
@@ -687,8 +711,11 @@
           if (view) { view.state = 'busy'; renderList(); }
           setStatus(`กำลังส่ง ${index + 1}/${total}: ${item.name}`);
           setProgress(index, total);
+          const rowStart = performance.now();
+          const rowRequests = stats.requests;
           try {
             const result = await syncRow(databaseId, item);
+            log(`  ⏱ ${item.name}: ${seconds(performance.now() - rowStart)} · ${stats.requests - rowRequests} request`);
             pageIds.set(item.id, result.id);
             previousLinks.set(result.id, result.connected || []);
             if (result.status === 'new') {
@@ -711,6 +738,7 @@
           renderList();
         }
         setProgress(total, total);
+        endPhase('ส่งแถว');
 
         // Build relations after every row has a page ID
         setStatus('กำลังเชื่อมความสัมพันธ์...');
@@ -746,6 +774,7 @@
             log(`✘ เชื่อมความสัมพันธ์ไม่สำเร็จ: ${err.message}`);
           }
         }
+        endPhase('เชื่อมความสัมพันธ์');
 
         const mapPage = parseNotionId($('mapPage').value || '');
         if (mapPage) {
@@ -756,12 +785,15 @@
           } catch (err) {
             log(`✘ อัปเดตแผนผังไม่สำเร็จ: ${err.message}`);
           }
+          endPhase('อัปเดตแผนผัง');
         }
 
         const summary = `เสร็จสิ้น: เพิ่มใหม่ ${created} · อัปเดต ${updated} · ไม่เปลี่ยน ${unchanged}${failed ? ` · ผิดพลาด ${failed}` : ''}`;
         setBusy(false);
         setStatus(summary, failed ? 'err' : 'ok');
         log(summary);
+        const avg = stats.requests ? Math.round(stats.apiMs / stats.requests) : 0;
+        log(`⏱ รวม ${seconds(performance.now() - sendStartedAt)} · ${stats.requests} request (เฉลี่ย ${avg} ms/request ไม่รวมหน่วง 350 ms) · retry ${stats.retries}`);
         return;
       }
     };
