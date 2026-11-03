@@ -62,7 +62,8 @@ function hasImageFill(node) {
 
 function makeFigmaUrl(node) {
   if (!figma.fileKey) return '';
-  return `https://www.figma.com/design/${figma.fileKey}?node-id=${node.id.replace(':', '-')}`;
+  const kind = figma.editorType === 'figjam' ? 'board' : 'design';
+  return `https://www.figma.com/${kind}/${figma.fileKey}?node-id=${node.id.replace(/:/g, '-')}`;
 }
 
 // Each run gets a number, so a slow older run cannot overwrite a newer selection

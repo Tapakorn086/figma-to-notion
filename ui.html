@@ -201,8 +201,14 @@
       return (richText || []).map((t) => t.plain_text).join('');
     }
 
+    // Notion caps one rich text piece at 2000 characters and 100 pieces, so long text is split
     function text(content) {
-      return [{ type: 'text', text: { content: String(content).slice(0, 2000) } }];
+      const value = String(content);
+      const pieces = [];
+      for (let i = 0; i < value.length && pieces.length < 100; i += 2000) {
+        pieces.push({ type: 'text', text: { content: value.slice(i, i + 2000) } });
+      }
+      return pieces.length ? pieces : [{ type: 'text', text: { content: '' } }];
     }
 
     function hashText(value) {
@@ -211,9 +217,15 @@
       return (h >>> 0).toString(36);
     }
 
-    // Hash of the layer content only, so a changed text or table triggers a content update
+    // Hash of the layer content only, so a changed text or table triggers a content update.
+    // The type is included because it decides which blocks are built.
     function contentHash(item) {
-      return hashText(JSON.stringify([item.text, item.extra, item.table, item.rawType, item.image ? item.image.length : 0]));
+      let image = 0;
+      if (item.image) {
+        image = 5381;
+        for (let i = 0; i < item.image.length; i++) image = ((image << 5) + image + item.image[i]) | 0;
+      }
+      return hashText(JSON.stringify([item.type, item.text, item.extra, item.table, item.rawType, image]));
     }
     /* domain:end */
 
@@ -278,7 +290,7 @@
       $('selectAll').textContent = items.length && items.every((item) => item.selected) ? 'ยกเลิกทั้งหมด' : 'เลือกทั้งหมด';
     }
 
-    async function notion(path, options = {}) {
+    async function notion(path, options = {}, attempt = 0) {
       const response = await fetch(NOTION_API + path, {
         ...options,
         headers: {
@@ -287,10 +299,17 @@
           ...(options.headers || {}),
         },
       });
-      const data = await response.json();
+      // Error pages (e.g. 502) may not be JSON
+      const data = await response.json().catch(() => ({}));
+      // Rate limited or a temporary server error: wait and try again a few times
+      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+        const retryAfter = Number(response.headers.get('Retry-After')) || 2 ** attempt;
+        await sleep(retryAfter * 1000);
+        return notion(path, options, attempt + 1);
+      }
       // Stay under Notion's rate limit of about 3 requests per second
       await sleep(350);
-      if (!response.ok) throw new Error(data.message || response.statusText);
+      if (!response.ok) throw new Error(data.message || `${response.status} ${response.statusText}`);
       return data;
     }
 
@@ -395,14 +414,16 @@
     /* domain:end */
 
     async function replaceContent(pageId, item) {
+      // Build (and upload images) first, so a failure leaves the old content in place
+      const toggle = await contentToggle(item);
       const children = await notion(`/blocks/${pageId}/children?page_size=100`);
-      const old = children.results.find((block) => block.type === 'toggle' && plain(block.toggle.rich_text) === CONTENT_TOGGLE);
+      const index = children.results.findIndex((block) => block.type === 'toggle' && plain(block.toggle.rich_text) === CONTENT_TOGGLE);
+      const old = children.results[index];
+      // Insert where the old toggle was, so it stays above the user's own notes
+      const body = { children: [toggle] };
+      if (index > 0) body.after = children.results[index - 1].id;
+      await notion(`/blocks/${pageId}/children`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body) });
       if (old) await notion(`/blocks/${old.id}`, { method: 'DELETE' });
-      await notion(`/blocks/${pageId}/children`, {
-        method: 'PATCH',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ children: [await contentToggle(item)] }),
-      });
     }
 
     // Create or update one row, returns its page ID and what changed
@@ -434,6 +455,7 @@
         return { id: page.id, status: 'new' };
       }
 
+      const connected = (existing.properties['Connected to']?.relation || []).map((rel) => rel.id);
       const changes = diffRow(existing, item);
       const previousLog = plain(existing.properties['Change log'].rich_text);
       const properties = { ...base };
@@ -441,14 +463,14 @@
 
       if (!changes.length) {
         await notion(`/pages/${existing.id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties: { 'Last synced': base['Last synced'] } }) });
-        return { id: existing.id, status: 'same' };
+        return { id: existing.id, status: 'same', connected };
       }
 
       const newLog = [`${nowLabel()}: ${changes.join('; ')}`, previousLog].filter(Boolean).join('\n');
       properties['Change log'] = { rich_text: text(newLog.slice(0, 2000)) };
       await notion(`/pages/${existing.id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties }) });
       if (changes.includes('เนื้อหาเปลี่ยน')) await replaceContent(existing.id, item);
-      return { id: existing.id, status: 'updated', changes };
+      return { id: existing.id, status: 'updated', changes, connected };
     }
 
     // Relations are rebuilt from the current layers on every send
@@ -471,7 +493,7 @@
       // Long sticky text makes nodes too wide, so labels are cut and the full text stays on the row
       const MAX_LABEL = 40;
       const nameOf = (row) => {
-        const name = plain(row.properties.Name.title).replace(/["\[\]]/g, "'") || 'ไม่มีชื่อ';
+        const name = plain(row.properties.Name.title).replace(/["\[\]]/g, "'").replace(/\s+/g, ' ').trim() || 'ไม่มีชื่อ';
         return name.length > MAX_LABEL ? `${name.slice(0, MAX_LABEL)}…` : name;
       };
       // Sections are subgraphs, so their ID is used as the node reference for edges
@@ -609,6 +631,8 @@
       }
 
       if (msg.type === 'selection') {
+        // A send in progress updates the state icons of the current list, so leave it alone
+        if (document.body.classList.contains('busy')) return;
         // Keep the user's checkbox and type choice for layers that are still listed
         const previous = new Map(items.map((item) => [item.id, item]));
         items = msg.items.map((item) => {
@@ -650,6 +674,7 @@
         const total = msg.items.length;
         const byId = new Map(items.map((item) => [item.id, item]));
         const pageIds = new Map();
+        const previousLinks = new Map();
         let created = 0;
         let updated = 0;
         let unchanged = 0;
@@ -665,6 +690,7 @@
           try {
             const result = await syncRow(databaseId, item);
             pageIds.set(item.id, result.id);
+            previousLinks.set(result.id, result.connected || []);
             if (result.status === 'new') {
               created++;
               if (view) { view.state = 'ok'; view.stateText = 'เพิ่มใหม่'; }
@@ -688,8 +714,13 @@
 
         // Build relations after every row has a page ID
         setStatus('กำลังเชื่อมความสัมพันธ์...');
+        // Links to rows outside this send are kept; links inside it are rebuilt from the connectors
+        const sentPages = new Set(pageIds.values());
         const relations = new Map();
-        for (const pageId of pageIds.values()) relations.set(pageId, { targets: [], labels: [], section: undefined });
+        for (const pageId of sentPages) {
+          const kept = previousLinks.get(pageId).filter((id) => !sentPages.has(id)).map((id) => ({ id }));
+          relations.set(pageId, { targets: kept, labels: [], section: undefined });
+        }
 
         for (const link of msg.links) {
           const fromPage = pageIds.get(link.from);

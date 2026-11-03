@@ -8,8 +8,11 @@ Figma plugin ที่ส่ง layer ที่เลือกไปเป็น
 2. สร้าง database ใหม่ใน Notion โดยมี property ดังนี้ (ชื่อต้องตรงทุกตัวอักษร)
    - `Name` เป็น Title (มีอยู่แล้วโดยค่าเริ่มต้น)
    - `Type` เป็น Select
-   - `Status` เป็น Select (ตัวเลือกเช่น To do, Done)
+   - `Status` เป็น Status (ต้องมีตัวเลือก `To do` และ `Removed`)
    - `Figma` เป็น URL
+   - `Figma key`, `Figma hash`, `Change log`, `Label` เป็น Text
+   - `Last synced` เป็น Date
+   - `In section` และ `Connected to` เป็น Relation ไปยัง database นี้เอง
 3. เพิ่ม view แบบ Board แล้ว group ตาม `Type`
 4. กด `...` ที่มุมขวาบนของ database > Connections > เชิญ integration ของคุณเข้ามา
 5. คัดลอก URL ของ database ไว้ใช้ตั้งค่า

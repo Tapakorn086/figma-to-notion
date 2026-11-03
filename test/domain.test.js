@@ -154,3 +154,26 @@ test('detectType reports Image when a shape has an image fill', () => {
   const node = { type: 'RECTANGLE', name: 'hero', fills: [{ type: 'IMAGE', visible: true }] };
   assert.equal(code.detectType(node), 'Image');
 });
+
+test('text splits long content into 2000-character pieces', () => {
+  const pieces = ui.text('a'.repeat(4500));
+  assert.deepEqual([...pieces].map((p) => p.text.content.length), [2000, 2000, 500]);
+  assert.equal(ui.text('').length, 1);
+});
+
+test('contentHash changes when the type or the image bytes change', () => {
+  const base = { type: 'Text', text: 'hi', image: new Uint8Array([1, 2, 3]) };
+  assert.notEqual(ui.contentHash(base), ui.contentHash({ ...base, type: 'Code' }));
+  assert.notEqual(ui.contentHash(base), ui.contentHash({ ...base, image: new Uint8Array([1, 2, 4]) }));
+});
+
+test('buildMermaid puts multi-line names on one line', () => {
+  const out = ui.buildMermaid([row({ id: 'a', name: 'line one\nline two' })]);
+  assert.match(out, /line one line two/);
+});
+
+test('type lists in code.js and ui.html stay in sync', () => {
+  const read = (file, name) => JSON.parse(fs.readFileSync(path.join(ROOT, file), 'utf8')
+    .match(new RegExp(`const ${name} = (\\[[^\\]]*\\])`))[1].replace(/'/g, '"'));
+  assert.deepEqual(read('code.js', 'TYPE_LABELS'), read('ui.html', 'TYPES'));
+});
