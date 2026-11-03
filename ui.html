@@ -294,7 +294,29 @@
     const stats = { requests: 0, retries: 0, apiMs: 0 };
     const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
+    // Notion allows about 3 requests per second. Requests start at least this far apart,
+    // but do not wait for each other to finish, so several can be in flight at once.
+    const REQUEST_GAP_MS = 340;
+    let nextRequestAt = 0;
+    async function takeTurn() {
+      const now = performance.now();
+      const at = Math.max(now, nextRequestAt);
+      nextRequestAt = at + REQUEST_GAP_MS;
+      if (at > now) await sleep(at - now);
+    }
+
+    // Run fn on every entry with at most `limit` running at the same time
+    async function runPool(list, limit, fn) {
+      let next = 0;
+      const worker = async () => {
+        while (next < list.length) await fn(list[next++]);
+      };
+      await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker));
+    }
+    const PARALLEL_ROWS = 3;
+
     async function notion(path, options = {}, attempt = 0) {
+      await takeTurn();
       stats.requests++;
       const started = performance.now();
       const response = await fetch(NOTION_API + path, {
@@ -316,8 +338,6 @@
         await sleep(retryAfter * 1000);
         return notion(path, options, attempt + 1);
       }
-      // Stay under Notion's rate limit of about 3 requests per second
-      await sleep(350);
       if (!response.ok) throw new Error(data.message || `${response.status} ${response.statusText}`);
       return data;
     }
@@ -741,19 +761,17 @@
           log(`✘ โหลดแถวเดิมไม่สำเร็จ ค้นทีละแถวแทน: ${err.message}`);
         }
 
-        // Rows are synced one at a time so the progress bar and each row's state stay accurate
-        for (const [index, item] of msg.items.entries()) {
+        // Several rows are synced at once. Sections go first, so their page IDs are known
+        // when the layers inside them are created.
+        let done = 0;
+        const syncOne = async (item) => {
           const view = byId.get(item.id);
           if (view) { view.state = 'busy'; renderList(); }
-          setStatus(`กำลังส่ง ${index + 1}/${total}: ${item.name}`);
-          setProgress(index, total);
           const rowStart = performance.now();
-          const rowRequests = stats.requests;
           try {
-            // The Section is created before its layers when both were sent, so its page ID is already known
             const sectionPageId = item.sectionId ? pageIds.get(item.sectionId) : undefined;
             const result = await syncRow(databaseId, item, existingByKey, sectionPageId);
-            log(`  ⏱ ${item.name}: ${seconds(performance.now() - rowStart)} · ${stats.requests - rowRequests} request`);
+            log(`  ⏱ ${item.name}: ${seconds(performance.now() - rowStart)}`);
             pageIds.set(item.id, result.id);
             previousRelations.set(result.id, result.previous || NO_RELATIONS);
             if (result.status === 'new') {
@@ -774,8 +792,15 @@
             if (view) { view.state = 'err'; view.stateText = err.message; }
             log(`✘ ${item.name}: ${err.message}`);
           }
+          done++;
+          setStatus(`กำลังส่ง ${done}/${total}`);
+          setProgress(done, total);
           renderList();
-        }
+        };
+        const sections = msg.items.filter((item) => item.type === 'Section');
+        const others = msg.items.filter((item) => item.type !== 'Section');
+        await runPool(sections, PARALLEL_ROWS, syncOne);
+        await runPool(others, PARALLEL_ROWS, syncOne);
         setProgress(total, total);
         endPhase('ส่งแถว');
 
@@ -806,17 +831,20 @@
           else if (item.sectionId && pageIds.has(item.sectionId)) relations.get(pageId).section = pageIds.get(item.sectionId);
         }
 
-        for (const [pageId, entry] of relations) {
+        let relationWrites = 0;
+        await runPool([...relations], PARALLEL_ROWS, async ([pageId, entry]) => {
           try {
-            await writeRelations(pageId, entry, previousRelations.get(pageId));
+            if (await writeRelations(pageId, entry, previousRelations.get(pageId))) relationWrites++;
           } catch (err) {
             log(`✘ เชื่อมความสัมพันธ์ไม่สำเร็จ: ${err.message}`);
           }
-        }
+        });
         endPhase('เชื่อมความสัมพันธ์');
 
+        // The diagram only shows rows and links, so it is rebuilt only when one of those changed
         const mapPage = parseNotionId($('mapPage').value || '');
-        if (mapPage) {
+        if (mapPage && !(created || updated || relationWrites)) log('แผนผังไม่เปลี่ยน ข้ามการอัปเดต');
+        else if (mapPage) {
           setStatus('กำลังอัปเดตหน้าแผนผัง...');
           try {
             await refreshMap(databaseId, mapPage);
@@ -832,7 +860,7 @@
         setStatus(summary, failed ? 'err' : 'ok');
         log(summary);
         const avg = stats.requests ? Math.round(stats.apiMs / stats.requests) : 0;
-        log(`⏱ รวม ${seconds(performance.now() - sendStartedAt)} · ${stats.requests} request (เฉลี่ย ${avg} ms/request ไม่รวมหน่วง 350 ms) · retry ${stats.retries}`);
+        log(`⏱ รวม ${seconds(performance.now() - sendStartedAt)} · ${stats.requests} request (เฉลี่ย ${avg} ms/request) · retry ${stats.retries}`);
         return;
       }
     };
