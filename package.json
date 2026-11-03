@@ -1,0 +1,9 @@
+{
+  "name": "figma-to-notion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Figma plugin that syncs layers to a Notion database",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

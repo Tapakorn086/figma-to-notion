@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      --bg: var(--figma-color-bg, #ffffff);
+      --bg-soft: var(--figma-color-bg-secondary, #f5f5f5);
+      --text: var(--figma-color-text, #1e1e1e);
+      --text-soft: var(--figma-color-text-secondary, #6b6b6b);
+      --border: var(--figma-color-border, #e5e5e5);
+      --brand: var(--figma-color-bg-brand, #0d99ff);
+      --brand-text: var(--figma-color-text-onbrand, #ffffff);
+      --ok: #1fa35b;
+      --err: #e5484d;
+      --warn: #d69e2e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: Inter, -apple-system, 'Helvetica Neue', sans-serif;
+      font-size: 12px;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+    header { padding: 12px 14px 8px; display: flex; align-items: center; gap: 10px; }
+    .logo {
+      width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+      background: linear-gradient(135deg, #0d99ff, #a259ff); color: #fff; font-weight: 700;
+    }
+    .title { font-weight: 600; font-size: 13px; }
+    .sub { color: var(--text-soft); font-size: 11px; display: flex; align-items: center; gap: 5px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); display: inline-block; }
+    .dot.ok { background: var(--ok); }
+
+    main { flex: 1; overflow: auto; padding: 0 14px 8px; display: flex; flex-direction: column; gap: 10px; }
+    .card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+    .card > summary { list-style: none; cursor: pointer; padding: 10px 12px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .card > summary::-webkit-details-marker { display: none; }
+    .card > summary::after { content: '▾'; margin-left: auto; color: var(--text-soft); }
+    .card:not([open]) > summary::after { content: '▸'; }
+    .card-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+    .card-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-weight: 600; }
+    .count { background: var(--bg-soft); color: var(--text-soft); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+    .spacer { flex: 1; }
+
+    label { display: flex; flex-direction: column; gap: 3px; color: var(--text-soft); font-size: 11px; }
+    input, select {
+      width: 100%; padding: 7px 8px; font-size: 12px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg-soft); color: var(--text);
+    }
+    input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+    .hint { color: var(--text-soft); opacity: 0.8; }
+
+    button {
+      font: inherit; font-size: 12px; cursor: pointer; border-radius: 6px; padding: 7px 10px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+    button:hover:not(:disabled) { background: var(--bg-soft); }
+    button:disabled { opacity: 0.45; cursor: default; }
+    button.primary { background: var(--brand); color: var(--brand-text); border-color: transparent; font-weight: 600; flex: 1; }
+    button.primary:hover:not(:disabled) { filter: brightness(1.05); background: var(--brand); }
+    button.link { border: none; background: none; color: var(--brand); padding: 2px 4px; }
+    button.wide { width: 100%; }
+
+    .list { display: flex; flex-direction: column; }
+    .row {
+      display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+      border-top: 1px solid var(--border);
+    }
+    .row:first-child { border-top: none; }
+    .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .name .auto { color: var(--text-soft); font-size: 11px; margin-left: 4px; }
+    .row select { width: 96px; padding: 4px 6px; font-size: 11px; }
+    .state { width: 18px; text-align: center; font-size: 12px; color: var(--text-soft); }
+    .state.ok { color: var(--ok); }
+    .state.err { color: var(--err); }
+    .state.same { color: var(--text-soft); }
+    .state.busy { animation: spin 1s linear infinite; display: inline-block; color: var(--brand); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty { color: var(--text-soft); padding: 18px 12px; text-align: center; }
+
+    footer { border-top: 1px solid var(--border); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+    .progress { height: 4px; background: var(--bg-soft); border-radius: 999px; overflow: hidden; }
+    .progress > div { height: 100%; width: 0; background: var(--brand); transition: width 0.25s ease; }
+    .status { color: var(--text-soft); font-size: 11px; min-height: 14px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    .actions { display: flex; gap: 8px; }
+    #log { white-space: pre-wrap; color: var(--text-soft); font-size: 11px; max-height: 160px; overflow: auto; padding: 0 12px 12px; line-height: 1.6; }
+    body.busy button, body.busy input { pointer-events: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">◆</div>
+    <div>
+      <div class="title">Figma → Notion</div>
+      <div class="sub"><span class="dot" id="dot"></span><span id="conn">ยังไม่ได้ตั้งค่า</span></div>
+    </div>
+  </header>
+
+  <main>
+    <details class="card" id="settings" open>
+      <summary>การเชื่อมต่อ</summary>
+      <div class="card-body">
+        <label>Integration token
+          <input id="token" type="password" placeholder="secret_..." />
+        </label>
+        <label>Database <span class="hint">วาง URL หรือ ID</span>
+          <input id="databaseId" placeholder="https://www.notion.so/..." />
+        </label>
+        <label>หน้าแผนผังความสัมพันธ์ <span class="hint">ไม่บังคับ</span>
+          <input id="mapPage" placeholder="URL ของหน้าแผนผัง" />
+        </label>
+        <button id="saveSettings">บันทึกการตั้งค่า</button>
+      </div>
+    </details>
+
+    <section class="card">
+      <div class="card-head">
+        <span>Layers</span>
+        <span class="count" id="count">0</span>
+        <span class="spacer"></span>
+        <button class="link" id="selectAll">เลือกทั้งหมด</button>
+      </div>
+      <div class="list" id="list"><div class="empty">เลือก layer ใน Figma เพื่อเริ่มต้น</div></div>
+    </section>
+
+    <details class="card" id="activity">
+      <summary>กิจกรรม</summary>
+      <div id="log">ยังไม่มีกิจกรรม</div>
+    </details>
+  </main>
+
+  <footer>
+    <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
+    <div class="status" id="status"></div>
+    <div class="actions">
+      <button id="check">ตรวจการลบ</button>
+      <button class="primary" id="send" disabled>ส่งไป Notion</button>
+    </div>
+    <button id="close" class="wide">ปิด</button>
+  </footer>
+
+  <script>
+    const NOTION_API = 'https://api.notion.com/v1';
+    const NOTION_VERSION = '2022-06-28';
+    const TYPES = ['Text', 'Sticky', 'Table', 'Connector', 'Section', 'Image', 'Frame', 'Group', 'Shape', 'Square', 'Drawing', 'Code', 'Stamp', 'Widget', 'Link', 'Other'];
+    // Figma-owned content lives inside this toggle; anything the user writes outside it is kept
+    const CONTENT_TOGGLE = 'จาก Figma';
+    const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+    let items = [];
+    let fileKey = 'local';
+    const $ = (id) => document.getElementById(id);
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // Activity log, kept in the collapsible panel
+    let logLines = [];
+    function log(text) {
+      logLines.push(text);
+      $('log').textContent = logLines.join('\n');
+      $('log').scrollTop = $('log').scrollHeight;
+    }
+
+    // One-line status above the buttons, colored by outcome
+    function setStatus(text, tone = '') {
+      $('status').textContent = text;
+      $('status').className = `status ${tone}`;
+    }
+
+    function setProgress(done, total) {
+      $('progressWrap').hidden = total === 0;
+      $('progressBar').style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+    }
+
+    function setBusy(busy) {
+      document.body.classList.toggle('busy', busy);
+      $('send').textContent = busy ? 'กำลังส่ง...' : 'ส่งไป Notion';
+      $('progressWrap').hidden = !busy;
+      if (!busy) setProgress(0, 0);
+      updateSendButton();
+    }
+
+    function updateConnection() {
+      const ready = $('token').value.trim() && parseNotionId($('databaseId').value);
+      $('dot').classList.toggle('ok', Boolean(ready));
+      $('conn').textContent = ready ? 'พร้อมใช้งาน' : 'ยังไม่ได้ตั้งค่า';
+    }
+
+    /* domain:start */
+    function parseNotionId(value) {
+      const match = value.replace(/-/g, '').match(/[0-9a-f]{32}/i);
+      return match ? match[0] : null;
+    }
+
+    function plain(richText) {
+      return (richText || []).map((t) => t.plain_text).join('');
+    }
+
+    function text(content) {
+      return [{ type: 'text', text: { content: String(content).slice(0, 2000) } }];
+    }
+
+    function hashText(value) {
+      let h = 5381;
+      for (let i = 0; i < value.length; i++) h = ((h << 5) + h + value.charCodeAt(i)) | 0;
+      return (h >>> 0).toString(36);
+    }
+
+    // Hash of the layer content only, so a changed text or table triggers a content update
+    function contentHash(item) {
+      return hashText(JSON.stringify([item.text, item.extra, item.table, item.rawType, item.image ? item.image.length : 0]));
+    }
+    /* domain:end */
+
+    function nowLabel() {
+      return new Date().toLocaleString('th-TH');
+    }
+
+    const STATE_ICON = { busy: '◌', ok: '✓', err: '✕', same: '•', new: '✓' };
+
+    function renderList() {
+      const list = $('list');
+      list.innerHTML = '';
+      $('count').textContent = items.length;
+      if (items.length === 0) {
+        list.innerHTML = '<div class="empty">เลือก layer ใน Figma เพื่อเริ่มต้น</div>';
+      }
+      items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = item.selected;
+        check.style.width = 'auto';
+        check.onchange = () => { item.selected = check.checked; updateSendButton(); };
+
+        const state = document.createElement('span');
+        state.className = `state ${item.state || ''} ${item.state === 'busy' ? 'busy' : ''}`;
+        state.textContent = STATE_ICON[item.state] || '';
+        state.title = item.stateText || '';
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = item.name;
+        name.title = item.text || item.name;
+        if (item.auto) {
+          const tag = document.createElement('span');
+          tag.className = 'auto';
+          tag.textContent = 'เชื่อม';
+          name.appendChild(tag);
+        }
+
+        const select = document.createElement('select');
+        TYPES.forEach((type) => {
+          const option = document.createElement('option');
+          option.value = type;
+          option.textContent = type;
+          option.selected = type === item.type;
+          select.appendChild(option);
+        });
+        select.onchange = () => { item.type = select.value; };
+
+        row.append(check, state, name, select);
+        list.appendChild(row);
+      });
+      updateSendButton();
+    }
+
+    function updateSendButton() {
+      const any = items.some((item) => item.selected);
+      $('send').disabled = !any || document.body.classList.contains('busy');
+      $('selectAll').textContent = items.length && items.every((item) => item.selected) ? 'ยกเลิกทั้งหมด' : 'เลือกทั้งหมด';
+    }
+
+    async function notion(path, options = {}) {
+      const response = await fetch(NOTION_API + path, {
+        ...options,
+        headers: {
+          Authorization: 'Bearer ' + $('token').value.trim(),
+          'Notion-Version': NOTION_VERSION,
+          ...(options.headers || {}),
+        },
+      });
+      const data = await response.json();
+      // Stay under Notion's rate limit of about 3 requests per second
+      await sleep(350);
+      if (!response.ok) throw new Error(data.message || response.statusText);
+      return data;
+    }
+
+    // Read every row of the database, following pagination
+    async function queryAll(databaseId, filter) {
+      const rows = [];
+      let cursor;
+      do {
+        const body = { page_size: 100, start_cursor: cursor, filter };
+        const result = await notion(`/databases/${databaseId}/query`, {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify(body),
+        });
+        rows.push(...result.results);
+        cursor = result.has_more ? result.next_cursor : undefined;
+      } while (cursor);
+      return rows;
+    }
+
+    async function uploadImage(bytes, filename) {
+      const created = await notion('/file_uploads', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ mode: 'single_part', filename, content_type: 'image/png' }),
+      });
+      const form = new FormData();
+      form.append('file', new Blob([bytes], { type: 'image/png' }), filename);
+      await notion(`/file_uploads/${created.id}/send`, { method: 'POST', body: form });
+      return created.id;
+    }
+
+    function tableBlock(rows) {
+      const width = Math.max(...rows.map((row) => row.length));
+      return {
+        object: 'block',
+        type: 'table',
+        table: {
+          table_width: width,
+          has_column_header: true,
+          has_row_header: false,
+          children: rows.slice(0, 100).map((row) => ({
+            object: 'block',
+            type: 'table_row',
+            table_row: { cells: Array.from({ length: width }, (_, i) => text(row[i] || '')) },
+          })),
+        },
+      };
+    }
+
+    // Blocks that make up the content of one layer
+    async function buildContent(item) {
+      const children = [];
+      if (item.type === 'Text' && item.text) children.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: text(item.text) } });
+      if (item.type === 'Table' && item.table && item.table.length) children.push(tableBlock(item.table));
+      if (item.type === 'Code' && item.extra) {
+        children.push({ object: 'block', type: 'code', code: { rich_text: text(item.extra), language: 'plain text' } });
+      }
+      if (item.type === 'Link' && /^https?:\/\//.test(item.extra || '')) {
+        children.push({ object: 'block', type: 'bookmark', bookmark: { url: item.extra } });
+      }
+      if (item.type === 'Other') {
+        children.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: text(`ชนิดใน Figma: ${item.rawType}`) } });
+      }
+      if (item.image) {
+        const uploadId = await uploadImage(item.image, `${item.name}.png`);
+        children.push({ object: 'block', type: 'image', image: { type: 'file_upload', file_upload: { id: uploadId } } });
+      }
+      return children;
+    }
+
+    async function contentToggle(item) {
+      return {
+        object: 'block',
+        type: 'toggle',
+        toggle: { rich_text: text(CONTENT_TOGGLE), children: await buildContent(item) },
+      };
+    }
+
+    async function findByKey(databaseId, key) {
+      const result = await notion(`/databases/${databaseId}/query`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ filter: { property: 'Figma key', rich_text: { equals: key } }, page_size: 1 }),
+      });
+      return result.results[0] || null;
+    }
+
+    /* domain:start */
+    // Compare a row with the layer it came from and describe what changed
+    function diffRow(page, item) {
+      const changes = [];
+      const oldName = plain(page.properties.Name.title);
+      const oldType = page.properties.Type.select ? page.properties.Type.select.name : '';
+      const oldStatus = page.properties.Status.status ? page.properties.Status.status.name : '';
+      if (oldName !== item.name) changes.push(`Name: "${oldName}" → "${item.name}"`);
+      if (oldType !== item.type) changes.push(`Type: ${oldType} → ${item.type}`);
+      if (oldStatus === 'Removed') changes.push('กลับมาใน Figma');
+      if (plain(page.properties['Figma hash'].rich_text) !== contentHash(item)) changes.push('เนื้อหาเปลี่ยน');
+      return changes;
+    }
+    /* domain:end */
+
+    async function replaceContent(pageId, item) {
+      const children = await notion(`/blocks/${pageId}/children?page_size=100`);
+      const old = children.results.find((block) => block.type === 'toggle' && plain(block.toggle.rich_text) === CONTENT_TOGGLE);
+      if (old) await notion(`/blocks/${old.id}`, { method: 'DELETE' });
+      await notion(`/blocks/${pageId}/children`, {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ children: [await contentToggle(item)] }),
+      });
+    }
+
+    // Create or update one row, returns its page ID and what changed
+    async function syncRow(databaseId, item) {
+      const existing = await findByKey(databaseId, item.key);
+      const base = {
+        Name: { title: text(item.name) },
+        Type: { select: { name: item.type } },
+        Figma: { url: item.figmaUrl || null },
+        'Figma key': { rich_text: text(item.key) },
+        'Figma hash': { rich_text: text(contentHash(item)) },
+        'Last synced': { date: { start: new Date().toISOString() } },
+      };
+
+      if (!existing) {
+        const page = await notion('/pages', {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            parent: { database_id: databaseId },
+            properties: {
+              ...base,
+              Status: { status: { name: 'To do' } },
+              'Change log': { rich_text: text(`${nowLabel()}: สร้างจาก Figma`) },
+            },
+            children: [await contentToggle(item)],
+          }),
+        });
+        return { id: page.id, status: 'new' };
+      }
+
+      const changes = diffRow(existing, item);
+      const previousLog = plain(existing.properties['Change log'].rich_text);
+      const properties = { ...base };
+      if (changes.includes('กลับมาใน Figma')) properties.Status = { status: { name: 'To do' } };
+
+      if (!changes.length) {
+        await notion(`/pages/${existing.id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties: { 'Last synced': base['Last synced'] } }) });
+        return { id: existing.id, status: 'same' };
+      }
+
+      const newLog = [`${nowLabel()}: ${changes.join('; ')}`, previousLog].filter(Boolean).join('\n');
+      properties['Change log'] = { rich_text: text(newLog.slice(0, 2000)) };
+      await notion(`/pages/${existing.id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties }) });
+      if (changes.includes('เนื้อหาเปลี่ยน')) await replaceContent(existing.id, item);
+      return { id: existing.id, status: 'updated', changes };
+    }
+
+    // Relations are rebuilt from the current layers on every send
+    async function writeRelations(pageId, entry) {
+      const properties = {
+        'Connected to': { relation: entry.targets },
+        Label: { rich_text: entry.labels.length ? text(entry.labels.join(' | ')) : [] },
+      };
+      if (entry.section !== undefined) properties['In section'] = { relation: entry.section ? [{ id: entry.section }] : [] };
+      await notion(`/pages/${pageId}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ properties }) });
+    }
+
+    /* domain:start */
+    // Pure: turns rows from the database into Mermaid source, grouped by Section
+    function buildMermaid(allRows) {
+      // Removed layers stay in the database but do not belong in the diagram
+      const rows = allRows.filter((row) => row.properties.Status.status?.name !== 'Removed');
+      const indexOf = new Map(rows.map((row, i) => [row.id, i]));
+      const isSection = (row) => row.properties.Type.select?.name === 'Section';
+      // Long sticky text makes nodes too wide, so labels are cut and the full text stays on the row
+      const MAX_LABEL = 40;
+      const nameOf = (row) => {
+        const name = plain(row.properties.Name.title).replace(/["\[\]]/g, "'") || 'ไม่มีชื่อ';
+        return name.length > MAX_LABEL ? `${name.slice(0, MAX_LABEL)}…` : name;
+      };
+      // Sections are subgraphs, so their ID is used as the node reference for edges
+      const ref = (row) => `${isSection(row) ? 's' : 'n'}${indexOf.get(row.id)}`;
+      // Short label: type prefix keeps tables and stickies apart in the diagram
+      const label = (row) => `[${row.properties.Type.select?.name || 'Other'}] ${nameOf(row)}`;
+
+      // Each row belongs to the first Section it points to
+      const sectionOf = new Map();
+      rows.forEach((row) => {
+        const parent = (row.properties['In section'].relation || []).find((rel) => indexOf.has(rel.id) && isSection(rows[indexOf.get(rel.id)]));
+        if (parent) sectionOf.set(row.id, parent.id);
+      });
+
+      // Top-to-bottom keeps wide Section groups from stretching the diagram sideways
+      const lines = ['flowchart TB'];
+      rows.filter(isSection).forEach((section) => {
+        const members = rows.filter((row) => !isSection(row) && sectionOf.get(row.id) === section.id);
+        if (members.length === 0) {
+          lines.push(`  ${ref(section)}["${nameOf(section)}"]`);
+          return;
+        }
+        lines.push(`  subgraph ${ref(section)}["${nameOf(section)}"]`);
+        members.forEach((row) => lines.push(`    ${ref(row)}["${label(row)}"]`));
+        lines.push('  end');
+      });
+      rows.filter((row) => !isSection(row) && !sectionOf.has(row.id)).forEach((row) => {
+        lines.push(`  ${ref(row)}["${label(row)}"]`);
+      });
+      rows.forEach((row) => {
+        (row.properties['Connected to'].relation || []).forEach((rel) => {
+          if (indexOf.has(rel.id)) lines.push(`  ${ref(row)} --> ${ref(rows[indexOf.get(rel.id)])}`);
+        });
+      });
+      return lines.join('\n');
+    }
+    /* domain:end */
+
+    // Rewrite the Mermaid diagram on the map page from every row and its connections
+    async function refreshMap(databaseId, mapPageId) {
+      const rows = await queryAll(databaseId, undefined);
+      const code = buildMermaid(rows);
+      const chunks = [];
+      for (let i = 0; i < code.length; i += 1900) chunks.push({ type: 'text', text: { content: code.slice(i, i + 1900) } });
+
+      const children = await notion(`/blocks/${mapPageId}/children?page_size=100`);
+      for (const block of children.results) {
+        if (block.type === 'code' && block.code.language === 'mermaid') await notion(`/blocks/${block.id}`, { method: 'DELETE' });
+      }
+      await notion(`/blocks/${mapPageId}/children`, {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ children: [{ object: 'block', type: 'code', code: { rich_text: chunks, language: 'mermaid' } }] }),
+      });
+    }
+
+    $('saveSettings').onclick = () => {
+      const databaseId = parseNotionId($('databaseId').value);
+      if (!databaseId) {
+        setStatus('Database ID ไม่ถูกต้อง', 'err');
+        return;
+      }
+      const mapPage = $('mapPage').value.trim() ? parseNotionId($('mapPage').value) : '';
+      parent.postMessage({
+        pluginMessage: {
+          type: 'save-settings',
+          settings: { token: $('token').value.trim(), databaseId, mapPage: mapPage || '' },
+        },
+      }, '*');
+      $('databaseId').value = databaseId;
+      updateConnection();
+      setStatus('บันทึกการตั้งค่าแล้ว', 'ok');
+    };
+
+    $('token').oninput = updateConnection;
+    $('databaseId').oninput = updateConnection;
+
+    $('selectAll').onclick = () => {
+      const allOn = items.length && items.every((item) => item.selected);
+      items.forEach((item) => { item.selected = !allOn; });
+      renderList();
+    };
+
+    $('close').onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
+    };
+
+    // Rows whose layer is gone from the file are marked Removed, never deleted
+    $('check').onclick = async () => {
+      const databaseId = parseNotionId($('databaseId').value);
+      if (!$('token').value.trim() || !databaseId) {
+        setStatus('กรุณาใส่ token และ database ก่อน', 'err');
+        return;
+      }
+      setBusy(true);
+      setStatus('กำลังตรวจ layer ที่ถูกลบ...');
+      try {
+        const prefix = `${fileKey}:`;
+        const rows = await queryAll(databaseId, { property: 'Figma key', rich_text: { starts_with: prefix } });
+        window.pendingCheck = new Map(rows.map((row) => [plain(row.properties['Figma key'].rich_text).slice(prefix.length), row]));
+        parent.postMessage({ pluginMessage: { type: 'check-nodes', ids: [...window.pendingCheck.keys()] } }, '*');
+      } catch (err) {
+        setBusy(false);
+        setStatus(`ตรวจไม่สำเร็จ: ${err.message}`, 'err');
+        log(`✘ ตรวจไม่สำเร็จ: ${err.message}`);
+      }
+    };
+
+    $('send').onclick = () => {
+      const selected = items.filter((item) => item.selected).map(({ selected, auto, state, stateText, ...rest }) => rest);
+      if (!selected.length) return;
+      if (!$('token').value.trim() || !parseNotionId($('databaseId').value)) {
+        setStatus('กรุณาใส่ token และ database ก่อน', 'err');
+        return;
+      }
+      items.forEach((item) => { item.state = item.selected ? 'busy' : ''; });
+      renderList();
+      setBusy(true);
+      setStatus(`กำลังเตรียม ${selected.length} รายการ...`);
+      parent.postMessage({ pluginMessage: { type: 'prepare', items: selected } }, '*');
+    };
+
+    window.onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+      const databaseId = parseNotionId($('databaseId').value);
+
+      if (msg.type === 'settings') {
+        fileKey = msg.fileKey || 'local';
+        if (msg.settings.token) $('token').value = msg.settings.token;
+        if (msg.settings.databaseId) $('databaseId').value = msg.settings.databaseId;
+        if (msg.settings.mapPage) $('mapPage').value = msg.settings.mapPage;
+        updateConnection();
+        return;
+      }
+
+      if (msg.type === 'selection') {
+        // Keep the user's checkbox and type choice for layers that are still listed
+        const previous = new Map(items.map((item) => [item.id, item]));
+        items = msg.items.map((item) => {
+          const old = previous.get(item.id);
+          return { ...item, selected: old ? old.selected : true, type: old ? old.type : item.type };
+        });
+        renderList();
+        return;
+      }
+
+      if (msg.type === 'missing-nodes') {
+        const rows = window.pendingCheck || new Map();
+        let marked = 0;
+        for (const nodeId of msg.ids) {
+          const row = rows.get(nodeId);
+          if (!row || row.properties.Status.status?.name === 'Removed') continue;
+          try {
+            const previousLog = plain(row.properties['Change log'].rich_text);
+            const newLog = [`${nowLabel()}: ไม่พบ layer ใน Figma (ถูกลบ?)`, previousLog].filter(Boolean).join('\n');
+            await notion(`/pages/${row.id}`, {
+              method: 'PATCH',
+              headers: JSON_HEADERS,
+              body: JSON.stringify({
+                properties: { Status: { status: { name: 'Removed' } }, 'Change log': { rich_text: text(newLog.slice(0, 2000)) } },
+              }),
+            });
+            marked++;
+          } catch (err) {
+            log(`✘ ${row.id.slice(0, 8)}: ${err.message}`);
+          }
+        }
+        setBusy(false);
+        setStatus(marked ? `พบ layer ที่หายไป ${marked} รายการ ตั้งสถานะเป็น Removed แล้ว` : 'ไม่พบ layer ที่ถูกลบ', 'ok');
+        log(`ตรวจเสร็จ พบ layer ที่หายไป ${marked} รายการ`);
+        return;
+      }
+
+      if (msg.type === 'prepared') {
+        const total = msg.items.length;
+        const byId = new Map(items.map((item) => [item.id, item]));
+        const pageIds = new Map();
+        let created = 0;
+        let updated = 0;
+        let unchanged = 0;
+        let failed = 0;
+        log(`เริ่มส่ง ${total} รายการ (พบความสัมพันธ์ ${msg.links.length} เส้น)`);
+
+        // Rows are synced one at a time so the progress bar and each row's state stay accurate
+        for (const [index, item] of msg.items.entries()) {
+          const view = byId.get(item.id);
+          if (view) { view.state = 'busy'; renderList(); }
+          setStatus(`กำลังส่ง ${index + 1}/${total}: ${item.name}`);
+          setProgress(index, total);
+          try {
+            const result = await syncRow(databaseId, item);
+            pageIds.set(item.id, result.id);
+            if (result.status === 'new') {
+              created++;
+              if (view) { view.state = 'ok'; view.stateText = 'เพิ่มใหม่'; }
+              log(`✔ เพิ่ม ${item.name} (${item.type})`);
+            } else if (result.status === 'updated') {
+              updated++;
+              if (view) { view.state = 'ok'; view.stateText = 'อัปเดต'; }
+              log(`✎ อัปเดต ${item.name}: ${result.changes.join('; ')}`);
+            } else {
+              unchanged++;
+              if (view) { view.state = 'same'; view.stateText = 'ไม่เปลี่ยน'; }
+            }
+          } catch (err) {
+            failed++;
+            if (view) { view.state = 'err'; view.stateText = err.message; }
+            log(`✘ ${item.name}: ${err.message}`);
+          }
+          renderList();
+        }
+        setProgress(total, total);
+
+        // Build relations after every row has a page ID
+        setStatus('กำลังเชื่อมความสัมพันธ์...');
+        const relations = new Map();
+        for (const pageId of pageIds.values()) relations.set(pageId, { targets: [], labels: [], section: undefined });
+
+        for (const link of msg.links) {
+          const fromPage = pageIds.get(link.from);
+          const toPage = pageIds.get(link.to);
+          if (!fromPage || !toPage) continue;
+          const entry = relations.get(fromPage);
+          entry.targets.push({ id: toPage });
+          if (link.label) entry.labels.push(link.label);
+        }
+
+        for (const item of msg.items) {
+          const pageId = pageIds.get(item.id);
+          if (!pageId) continue;
+          // Leave the section alone when the section itself was not sent
+          if (item.sectionId === null) relations.get(pageId).section = null;
+          else if (item.sectionId && pageIds.has(item.sectionId)) relations.get(pageId).section = pageIds.get(item.sectionId);
+        }
+
+        for (const [pageId, entry] of relations) {
+          try {
+            await writeRelations(pageId, entry);
+          } catch (err) {
+            log(`✘ เชื่อมความสัมพันธ์ไม่สำเร็จ: ${err.message}`);
+          }
+        }
+
+        const mapPage = parseNotionId($('mapPage').value || '');
+        if (mapPage) {
+          setStatus('กำลังอัปเดตหน้าแผนผัง...');
+          try {
+            await refreshMap(databaseId, mapPage);
+            log('อัปเดตหน้าแผนผังความสัมพันธ์แล้ว');
+          } catch (err) {
+            log(`✘ อัปเดตแผนผังไม่สำเร็จ: ${err.message}`);
+          }
+        }
+
+        const summary = `เสร็จสิ้น: เพิ่มใหม่ ${created} · อัปเดต ${updated} · ไม่เปลี่ยน ${unchanged}${failed ? ` · ผิดพลาด ${failed}` : ''}`;
+        setBusy(false);
+        setStatus(summary, failed ? 'err' : 'ok');
+        log(summary);
+        return;
+      }
+    };
+
+    parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');
+    updateSendButton();
+  </script>
+</body>
+</html>
