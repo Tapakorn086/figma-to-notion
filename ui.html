@@ -314,6 +314,8 @@
       await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker));
     }
     const PARALLEL_ROWS = 3;
+    // Set when a check marks rows Removed, which changes the diagram without any send changing it
+    let mapStale = false;
 
     async function notion(path, options = {}, attempt = 0) {
       await takeTurn();
@@ -717,6 +719,8 @@
               }),
             });
             marked++;
+            // Removed rows leave the diagram, so the next send must redraw it even if nothing else changed
+            mapStale = true;
           } catch (err) {
             log(`✘ ${row.id.slice(0, 8)}: ${err.message}`);
           }
@@ -843,8 +847,9 @@
 
         // The diagram only shows rows and links, so it is rebuilt only when one of those changed
         const mapPage = parseNotionId($('mapPage').value || '');
-        if (mapPage && !(created || updated || relationWrites)) log('แผนผังไม่เปลี่ยน ข้ามการอัปเดต');
+        if (mapPage && !(created || updated || relationWrites || mapStale)) log('แผนผังไม่เปลี่ยน ข้ามการอัปเดต');
         else if (mapPage) {
+          mapStale = false;
           setStatus('กำลังอัปเดตหน้าแผนผัง...');
           try {
             await refreshMap(databaseId, mapPage);

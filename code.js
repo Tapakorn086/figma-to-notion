@@ -143,29 +143,54 @@ async function findNeighbors(selectedIds) {
       const from = connector.connectorStart && connector.connectorStart.endpointNodeId;
       const to = connector.connectorEnd && connector.connectorEnd.endpointNodeId;
       if (!from || !to) continue;
-      const otherId = selectedIds.has(from) ? to : selectedIds.has(to) ? from : null;
-      if (!otherId || selectedIds.has(otherId) || found.has(otherId)) continue;
-      const node = await figma.getNodeByIdAsync(otherId);
-      if (node) found.set(otherId, node);
+      const fromOwner = await ownerOf(from, selectedIds);
+      const toOwner = await ownerOf(to, selectedIds);
+      const otherEnd = fromOwner && !toOwner ? to : toOwner && !fromOwner ? from : null;
+      if (!otherEnd) continue;
+      // An arrow into a layer inside a Group means the Group is the row to add
+      let node = await figma.getNodeByIdAsync(otherEnd);
+      for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
+        if (ancestor.type === 'GROUP') { node = ancestor; break; }
+      }
+      if (!node || selectedIds.has(node.id) || found.has(node.id)) continue;
+      found.set(node.id, node);
     }
   }
   return [...found.values()];
 }
 
 // Connectors whose both ends are in the sent set become relations between rows
+// A connector can attach to a layer inside a Group or Frame. The row belongs to the
+// nearest ancestor that is one of the wanted layers, so the link still lands on that row.
+async function ownerOf(nodeId, wantedIds) {
+  let node = nodeId ? await figma.getNodeByIdAsync(nodeId) : null;
+  while (node && !wantedIds.has(node.id)) node = node.parent;
+  return node ? node.id : null;
+}
+
 async function findLinks(itemIds) {
   const ids = new Set(itemIds);
   const seen = new Set();
   const links = [];
+  // Connectors on a sent layer, plus on the layers inside a sent Group (an arrow into a Group
+  // often attaches to a child). Frames and Sections are not walked: large design frames hold
+  // thousands of layers, and reading every one of them froze the plugin.
+  const sources = [];
   for (const id of itemIds) {
     const node = await figma.getNodeByIdAsync(id);
     if (!node) continue;
+    sources.push(node);
+    if (node.type === 'GROUP') {
+      for (const child of node.findAll(() => true)) sources.push(child);
+    }
+  }
+  for (const node of sources) {
     for (const connector of node.attachedConnectors || []) {
       if (seen.has(connector.id)) continue;
       seen.add(connector.id);
-      const from = connector.connectorStart && connector.connectorStart.endpointNodeId;
-      const to = connector.connectorEnd && connector.connectorEnd.endpointNodeId;
-      if (ids.has(from) && ids.has(to)) {
+      const from = await ownerOf(connector.connectorStart && connector.connectorStart.endpointNodeId, ids);
+      const to = await ownerOf(connector.connectorEnd && connector.connectorEnd.endpointNodeId, ids);
+      if (from && to && from !== to) {
         links.push({ from, to, label: connector.text ? connector.text.characters : '' });
       }
     }
